@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SWF Character Editor - Pure Vanilla</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font: 13px/1.4 Segoe UI, Arial, sans-serif; margin: 0; background: #1e1f22; color: #dfe1e5; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  #toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 10px; background: #2b2d30; border-bottom: 1px solid #3a3d42; }
+  #toolbar .group { display: flex; gap: 4px; align-items: center; padding: 0 10px 0 0; border-right: 1px solid #3a3d42; }
+  #toolbar .group:last-child { border-right: none; }
+  button { background: #3b3e44; color: #dfe1e5; border: 1px solid #54575e; border-radius: 4px; padding: 4px 10px; cursor: pointer; font: inherit; }
+  button:hover { background: #4a4e55; }
+  button.active { background: #3574f0; border-color: #3574f0; color: #fff; }
+  button:disabled { opacity: .4; cursor: default; }
+  input[type=number], input[type=text], select { width: 64px; background: #1e1f22; border: 1px solid #54575e; border-radius: 4px; color: #dfe1e5; padding: 3px 6px; font: inherit; }
+  input[type=number] { width: 64px; }
+  select { width: auto; }
+  input[type=color] { width: 34px; height: 26px; padding: 1px; background: #1e1f22; border: 1px solid #54575e; border-radius: 4px; }
+  label { color: #9da0a8; }
+  #main { display: flex; flex: 1; min-height: 0; }
+  #canvasWrap { flex: 1; overflow: auto; padding: 16px; }
+  #stage { background: #fff; box-shadow: 0 0 0 1px #000, 0 4px 16px rgba(0,0,0,.5); cursor: crosshair; }
+  #props { width: 230px; background: #2b2d30; border-left: 1px solid #3a3d42; padding: 10px; overflow-y: auto; }
+  #props h3 { margin: 0 0 8px; font-size: 13px; color: #f0a030; }
+  .proprow { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; gap: 6px; }
+  .proprow label { flex: 1; }
+  .proprow input { width: 92px; }
+  .proprow input[type=color] { width: 60px; }
+  .sect { border-top: 1px solid #3a3d42; margin-top: 10px; padding-top: 8px; }
+  #timeline { background: #2b2d30; border-top: 1px solid #3a3d42; padding: 6px 10px; max-height: 200px; overflow-y: auto; }
+  #tlControls { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+  .tlGrid { display: grid; grid-template-columns: 130px 1fr; gap: 0; }
+  .tlRuler { height: 22px; position: relative; border-bottom: 1px solid #3a3d42; }
+  .tlRuler span { position: absolute; top: 0; font-size: 10px; color: #9da0a8; transform: translateX(2px); }
+  .layerName { height: 26px; line-height: 26px; padding-right: 8px; text-align: right; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; color: #9da0a8; }
+  .layerName.active { color: #fff; font-weight: 600; }
+  .tlTrack { height: 26px; position: relative; border-bottom: 1px solid #232428; cursor: pointer; }
+  .tlTrack .kf { position: absolute; top: 7px; width: 12px; height: 12px; transform: translateX(-1px) rotate(45deg); background: #f0a030; border-radius: 2px; }
+  .tlTrack .kf:hover { background: #ffc060; }
+  #playhead { position: absolute; top: 0; width: 1px; background: #3574f0; pointer-events: none; }
+  #playhead::after { content: ''; position: absolute; top: 0; left: -4px; border: 5px solid transparent; border-top-color: #3574f0; }
+  #status { min-height: 18px; color: #7ec97e; padding: 4px 10px; background: #232428; font-size: 12px; }
+  .hint { color: #777982; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <div class="group" id="tools">
+    <button data-tool="select" class="active" title="Select / move (V)">Select</button>
+    <button data-tool="rect" title="Rectangle (R)">Rect</button>
+    <button data-tool="ellipse" title="Ellipse (E)">Ellipse</button>
+    <button data-tool="line" title="Line (L)">Line</button>
+    <button data-tool="pencil" title="Freehand pencil (P)">Pencil</button>
+    <button data-tool="brush" title="Paintbrush (B)">Brush</button>
+    <button data-tool="points" title="Edit points (A): drag points to reshape, right-click or Alt+click deletes a vertex, double-click on an edge inserts one">Points</button>
+  </div>
+  <div class="group">
+    <label>Fill</label><input type="color" id="fillColor" value="#c0392b">
+    <label>Stroke</label><input type="color" id="strokeColor" value="#333333">
+    <label>Width</label><input type="number" id="strokeWidth" value="2" min="0" max="40" step="0.5" style="width:44px">
+  </div>
+  <div class="group">
+    <label>Brush pattern</label>
+    <select id="brushPattern" title="Nib shape">
+      <option value="round">Round</option>
+      <option value="flat">Flat</option>
+      <option value="calligraphy">Calligraphy</option>
+      <option value="taper">Taper</option>
+    </select>
+    <label>Size</label>
+    <input type="range" id="brushSize" min="1" max="80" value="12" style="width:80px">
+    <span id="brushSizeLabel" style="width:20px;text-align:right">12</span>
+  </div>
+  <div class="group">
+    <label title="Tolerance in pixels: how far the simplified outline may deviate from the original">Simplify tol.</label>
+    <input type="number" id="simplifyTol" value="2" min="0.5" max="20" step="0.5" style="width:44px">
+    <button id="btnSimplify" title="Smooth and simplify the selected shape's points (line / poly / brush)">Simplify</button>
+  </div>
+  <div class="group">
+    <button data-tool="zoom" title="Zoom (Z): click to zoom in, Alt / Shift / right-click to zoom out, Ctrl+wheel anywhere on the stage">Zoom</button>
+    <button id="zoomOut" title="Zoom out (-)">-</button>
+    <span id="zoomLabel" style="min-width:36px;text-align:center;color:#9da0a8">100%</span>
+    <button id="zoomIn" title="Zoom in (+)">+</button>
+    <button id="zoomReset" title="Zoom 100% (0)">1:1</button>
+  </div>
+  <div class="group">
+    <label>Name</label><input type="text" id="charName" value="Character1" style="width:100px">
+    <label>FPS</label><input type="number" id="fps" value="24" min="1" max="60">
+    <label>Frames</label><input type="number" id="frameCount" value="12" min="1" max="999">
+    <label>Stage</label>
+    <input type="number" id="stageW" value="550" min="32" max="4096" style="width:56px">
+    <span style="color:#777982">x</span>
+    <input type="number" id="stageH" value="400" min="32" max="4096" style="width:56px">
+  </div>
+  <div class="group">
+    <button id="btnPlay">Play</button>
+    <button id="btnAddKF" title="Snapshot current state as a keyframe on the active layer">+ Keyframe</button>
+    <button id="btnDelKF" title="Remove keyframe at current frame (active layer)">- Keyframe</button>
+  </div>
+  <div class="group">
+    <button id="btnSave">Save project</button>
+    <button id="btnLoad">Load project</button>
+    <button id="btnExport" style="background:#3574f0;border-color:#3574f0;font-weight:600">Export SWF</button>
+    <input type="file" id="fileInput" accept=".json" style="display:none">
+  </div>
+</div>
+
+<div id="main">
+  <div id="canvasWrap"><canvas id="stage"></canvas></div>
+  <div id="props">
+    <h3 id="propTitle">No selection</h3>
+    <div id="propBody" class="hint">Draw or select a shape to edit its properties here.</div>
+  </div>
+</div>
+
+<div id="timeline">
+  <div id="tlControls">
+    <button id="btnAddLayer">+ Layer</button>
+    <button id="btnDelLayer">- Layer</button>
+    <label class="hint">Frame <b id="curFrameLabel">1</b> &middot; layer: <b id="activeLayerLabel">Layer 1</b> &middot; click a track to move the playhead; edits auto-create keyframes</label>
+  </div>
+  <div class="tlGrid">
+    <div>
+      <div class="tlRuler" style="border-bottom:none"></div>
+      <div id="layerNames"></div>
+    </div>
+    <div>
+      <div class="tlRuler" id="ruler"></div>
+      <div id="tracks"></div>
+    </div>
+  </div>
+</div>
+
+<div id="status">Ready. Pure vanilla edition: everything runs offline in your browser - no server, no install, export included.</div>
+
+<script src="brush.js"></script>
+<script src="anim.js"></script>
+<script src="simplify.js"></script>
+<script src="swf_exporter.js"></script>
+<script>
+'use strict';
+
+// ---------------- model ----------------
+let project = {
+  name: 'Character1', fps: 24, stage: { w: 550, h: 400 }, frameCount: 12,
+  layers: [{ name: 'Layer 1', keyframes: [{ frame: 1, shapes: [] }] }]
+};
+let curFrame = 1;          // 1-based
+let activeLayer = 0;
+let nextShapeId = 1;
+let tool = 'select';
+let selection = null;      // { layer: index, id: shapeId }
+let playing = false;
+let playTimer = null;
+let drag = null;           // interaction state
+let zoom = 1;              // view zoom (canvas is CSS-scaled; drawing stays in stage px)
+
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const CELL_W = 12;
+
+// interpolation lives in anim.js (shared with the vanilla edition)
+const clone = Anim.clone, lerp = Anim.lerp;
+const surroundingKFs = Anim.surroundingKFs;
+const layerStateAt = Anim.layerStateAt;
+
+function ensureKF(li, f) {
+  const layer = project.layers[li];
+  let kf = layer.keyframes.find(k => k.frame === f);
+  if (!kf) {
+    kf = { frame: f, shapes: layerStateAt(layer, f) };
+    layer.keyframes.push(kf);
+    layer.keyframes.sort((a, b) => a.frame - b.frame);
+    buildTimeline();
+  }
+  return kf;
+}
+
+function applyToSelectedShape(mut) {
+  if (!selection) return;
+  const li = selection.layer;
+  const kf = ensureKF(li, curFrame);
+  const sh = kf.shapes.find(s => s.id === selection.id);
+  if (sh) { mut(sh); render(); buildProps(); }
+}
+
+// ---------------- rendering ----------------
+const ZOOM_MIN = 0.25, ZOOM_MAX = 8, ZOOM_STEP = 1.25;
+
+function updateZoomLabel() {
+  const el = document.getElementById('zoomLabel');
+  if (el) el.textContent = Math.round(zoom * 100) + '%';
+}
+
+function applyZoom(z) {
+  zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+  canvas.style.width = (canvas.width * zoom) + 'px';
+  canvas.style.height = (canvas.height * zoom) + 'px';
+  updateZoomLabel();
+}
+
+// zoom keeping the viewport center in place
+function setZoom(z) {
+  const wrap = document.getElementById('canvasWrap');
+  const pad = 16;                                        // #canvasWrap padding
+  const cx = (wrap.scrollLeft + wrap.clientWidth / 2 - pad) / zoom;
+  const cy = (wrap.scrollTop + wrap.clientHeight / 2 - pad) / zoom;
+  applyZoom(z);
+  wrap.scrollLeft = cx * zoom + pad - wrap.clientWidth / 2;
+  wrap.scrollTop = cy * zoom + pad - wrap.clientHeight / 2;
+}
+
+// zoom keeping the stage point under the mouse fixed (zoom tool / wheel)
+function zoomAt(e, p, factor) {
+  const wrap = document.getElementById('canvasWrap');
+  const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom * factor));
+  if (newZoom === zoom) return;
+  applyZoom(newZoom);
+  const wr = wrap.getBoundingClientRect();
+  wrap.scrollLeft = p.x * zoom + 16 - (e.clientX - wr.left);
+  wrap.scrollTop = p.y * zoom + 16 - (e.clientY - wr.top);
+}
+
+function resizeCanvas() {
+  canvas.width = project.stage.w;
+  canvas.height = project.stage.h;
+  canvas.style.width = (canvas.width * zoom) + 'px';
+  canvas.style.height = (canvas.height * zoom) + 'px';
+  render();
+}
+
+function drawShapePath(s) {
+  ctx.beginPath();
+  if (s.type === 'rect') {
+    ctx.rect(-s.w / 2, -s.h / 2, s.w, s.h);
+  } else if (s.type === 'ellipse') {
+    ctx.ellipse(0, 0, Math.max(s.w / 2, 0.5), Math.max(s.h / 2, 0.5), 0, 0, Math.PI * 2);
+  } else if (s.points && s.points.length) {
+    const pts = s.points;
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    if (s.type === 'poly' && s.fill) ctx.closePath();
+  }
+}
+
+function drawOne(s) {
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.rotate((s.rotation || 0) * Math.PI / 180);
+  ctx.scale(s.scaleX ?? 1, s.scaleY ?? 1);
+  drawShapePath(s);
+  if (s.fill) { ctx.fillStyle = s.fill; ctx.fill(); }
+  if (s.stroke && (s.strokeWidth || 0) > 0) {
+    ctx.strokeStyle = s.stroke;
+    ctx.lineWidth = s.strokeWidth;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (let li = project.layers.length - 1; li >= 0; li--) {
+    const layer = project.layers[li];
+    for (const s of layerStateAt(layer, curFrame)) drawOne(s);
+    if (selection && selection.layer === li) {
+      const s = layerStateAt(layer, curFrame).find(x => x.id === selection.id);
+      if (s) {
+        if (tool === 'points') {
+          ctx.lineWidth = 1;
+          for (const h of pointHandles(s)) {
+            const sp = localToStage(s, h.local[0], h.local[1]);
+            ctx.fillStyle = (drag && drag.kind === 'point' && drag.handle === h) ? '#f0a030' : '#3574f0';
+            ctx.strokeStyle = '#ffffff';
+            ctx.fillRect(sp.x - 3, sp.y - 3, 6, 6);
+            ctx.strokeRect(sp.x - 3, sp.y - 3, 6, 6);
+          }
+        } else {
+          ctx.save();
+          ctx.translate(s.x, s.y);
+          ctx.rotate((s.rotation || 0) * Math.PI / 180);
+          ctx.scale(s.scaleX ?? 1, s.scaleY ?? 1);
+          const bw = Math.max(s.w ?? 0, 8) + 6, bh = Math.max(s.h ?? 0, 8) + 6;
+          ctx.strokeStyle = '#3574f0'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+          ctx.strokeRect(-bw / 2, -bh / 2, bw, bh);
+          ctx.restore();
+        }
+      }
+    }
+  }
+  if (drag && drag.preview) drawOne(drag.preview);
+  document.getElementById('curFrameLabel').textContent = curFrame;
+  updatePlayhead();
+}
+
+// ---------------- timeline ----------------
+function buildTimeline() {
+  const ruler = document.getElementById('ruler');
+  const names = document.getElementById('layerNames');
+  const tracks = document.getElementById('tracks');
+  ruler.innerHTML = ''; names.innerHTML = ''; tracks.innerHTML = '';
+  const width = project.frameCount * CELL_W;
+  ruler.style.width = tracks.style.width = width + 'px';
+  for (let f = 1; f <= project.frameCount; f += 5) {
+    const sp = document.createElement('span');
+    sp.style.left = ((f - 1) * CELL_W) + 'px';
+    sp.textContent = f;
+    ruler.appendChild(sp);
+  }
+  project.layers.forEach((layer, li) => {
+    const nm = document.createElement('div');
+    nm.className = 'layerName' + (li === activeLayer ? ' active' : '');
+    nm.textContent = layer.name;
+    nm.onclick = () => { activeLayer = li; buildTimeline(); };
+    nm.ondblclick = () => {
+      const v = prompt('Layer name:', layer.name);
+      if (v) { layer.name = v; buildTimeline(); }
+    };
+    names.appendChild(nm);
+
+    const tr = document.createElement('div');
+    tr.className = 'tlTrack';
+    tr.style.width = width + 'px';
+    for (const kf of layer.keyframes) {
+      if (kf.frame <= project.frameCount) {
+        const d = document.createElement('div');
+        d.className = 'kf';
+        d.style.left = ((kf.frame - 1) * CELL_W) + 'px';
+        d.title = 'Keyframe ' + kf.frame;
+        d.onclick = (e) => { e.stopPropagation(); setFrame(kf.frame); };
+        tr.appendChild(d);
+      }
+    }
+    tr.onclick = (e) => {
+      const r = tr.getBoundingClientRect();
+      setFrame(Math.max(1, Math.min(project.frameCount, Math.round((e.clientX - r.left) / CELL_W) + 1)));
+    };
+    tracks.appendChild(tr);
+  });
+  const ph = document.createElement('div');
+  ph.id = 'playhead';
+  ph.style.height = (22 + project.layers.length * 27) + 'px';
+  tracks.appendChild(ph);
+  document.getElementById('activeLayerLabel').textContent = project.layers[activeLayer].name;
+  updatePlayhead();
+}
+
+function updatePlayhead() {
+  const ph = document.getElementById('playhead');
+  if (ph) ph.style.left = ((curFrame - 1) * CELL_W) + 'px';
+}
+
+function setFrame(f) {
+  curFrame = Math.max(1, Math.min(project.frameCount, f));
+  render();
+}
+
+// ---------------- properties panel ----------------
+function buildProps() {
+  const title = document.getElementById('propTitle');
+  const body = document.getElementById('propBody');
+  if (!selection) {
+    title.textContent = 'No selection';
+    body.className = 'hint';
+    body.textContent = 'Draw or select a shape to edit its properties here.';
+    return;
+  }
+  const layer = project.layers[selection.layer];
+  const s = layerStateAt(layer, curFrame).find(x => x.id === selection.id);
+  if (!s) { selection = null; buildProps(); return; }
+  title.textContent = s.type + ' (id ' + s.id + ') — layer ' + layer.name;
+  body.className = '';
+  body.innerHTML = '';
+  const mkrow = (label, type, val, onchange, attrs) => {
+    const row = document.createElement('div');
+    row.className = 'proprow';
+    const l = document.createElement('label'); l.textContent = label;
+    const i = document.createElement('input');
+    i.type = type; i.value = val;
+    Object.assign(i, attrs || {});
+    i.oninput = () => onchange(i.value);
+    row.appendChild(l); row.appendChild(i);
+    body.appendChild(row);
+  };
+  const num = (label, key) => mkrow(label, 'number', +s[key], v => applyToSelectedShape(sh => sh[key] = +v), { step: 'any' });
+  num('X', 'x'); num('Y', 'y');
+  if (s.type === 'rect' || s.type === 'ellipse') { num('Width', 'w'); num('Height', 'h'); }
+  num('Rotation', 'rotation');
+  num('Scale X', 'scaleX'); num('Scale Y', 'scaleY');
+  mkrow('Fill', 'color', s.fill || '#000000', v => applyToSelectedShape(sh => sh.fill = v));
+  mkrow('Stroke', 'color', s.stroke || '#000000', v => applyToSelectedShape(sh => sh.stroke = v));
+  mkrow('Stroke width', 'number', s.strokeWidth ?? 0, v => applyToSelectedShape(sh => sh.strokeWidth = +v), { min: 0, max: 40, step: 0.5 });
+  const del = document.createElement('button');
+  del.textContent = 'Delete shape';
+  del.style.marginTop = '8px';
+  del.onclick = deleteSelected;
+  body.appendChild(del);
+}
+
+function deleteSelected() {
+  if (!selection) return;
+  const kf = ensureKF(selection.layer, curFrame);
+  kf.shapes = kf.shapes.filter(s => s.id !== selection.id);
+  selection = null;
+  render(); buildProps(); buildTimeline();
+}
+
+// ---------------- point editing (subselection) ----------------
+function rotScaleMatrix(s) {
+  const rad = (s.rotation || 0) * Math.PI / 180;
+  const c = Math.cos(rad), sn = Math.sin(rad);
+  const sx = s.scaleX ?? 1, sy = s.scaleY ?? 1;
+  return { a: c * sx, b: sn * sx, c: -sn * sy, d: c * sy };
+}
+function stageToLocal(s, px, py) {
+  const m = rotScaleMatrix(s);
+  const dx = px - s.x, dy = py - s.y;
+  const det = (m.a * m.d - m.b * m.c) || 1e-9;
+  return { x: (m.d * dx - m.c * dy) / det, y: (m.a * dy - m.b * dx) / det };
+}
+function localToStage(s, lx, ly) {
+  const m = rotScaleMatrix(s);
+  return { x: s.x + m.a * lx + m.c * ly, y: s.y + m.b * lx + m.d * ly };
+}
+function pointHandles(s) {
+  if (s.type === 'rect') {
+    const x = s.w / 2, y = s.h / 2;
+    return [{ kind: 'extent', local: [-x, -y] }, { kind: 'extent', local: [x, -y] },
+            { kind: 'extent', local: [x, y] }, { kind: 'extent', local: [-x, y] }];
+  }
+  if (s.type === 'ellipse') {
+    const x = s.w / 2, y = s.h / 2;
+    return [{ kind: 'extent', local: [x, 0] }, { kind: 'extent', local: [0, y] },
+            { kind: 'extent', local: [-x, 0] }, { kind: 'extent', local: [0, -y] }];
+  }
+  if (s.points) return s.points.map((p, i) => ({ kind: 'vertex', index: i, local: p }));
+  return [];
+}
+// recenter a vertex-based shape on its point bbox (used after point edits)
+function recomputePolyBox(sh) {
+  const xs = sh.points.map(q => q[0]), ys = sh.points.map(q => q[1]);
+  const minx = Math.min(...xs), maxx = Math.max(...xs);
+  const miny = Math.min(...ys), maxy = Math.max(...ys);
+  const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
+  sh.points = sh.points.map(q => [q[0] - cx, q[1] - cy]);
+  const m = rotScaleMatrix(sh);
+  sh.x += m.a * cx + m.c * cy;      // center moved: apply shift in stage space
+  sh.y += m.b * cx + m.d * cy;
+  sh.w = maxx - minx;
+  sh.h = maxy - miny;
+}
+// delete a vertex from the selected shape (right-click or Alt+click)
+function tryDeletePoint(s, handle) {
+  if (!handle || handle.kind !== 'vertex' || !s.points) return false;
+  const minPts = s.type === 'line' ? 2 : 3;
+  if (s.points.length <= minPts) {
+    setStatus('Cannot delete: ' + s.type + ' needs at least ' + minPts + ' points.');
+    return false;
+  }
+  applyToSelectedShape(sh => { sh.points.splice(handle.index, 1); recomputePolyBox(sh); });
+  buildTimeline();
+  return true;
+}
+function deletePointUnder(p) {
+  if (!selection) return;
+  const s = layerStateAt(project.layers[selection.layer], curFrame).find(x => x.id === selection.id);
+  if (!s || !s.points) return;
+  let best = null;
+  for (const h of pointHandles(s)) {
+    const sp = localToStage(s, h.local[0], h.local[1]);
+    const d = Math.hypot(sp.x - p.x, sp.y - p.y);
+    if (d <= 8 && (!best || d < best.d)) best = { h, d };
+  }
+  if (best) tryDeletePoint(s, best.h);
+}
+
+// ---------------- hit testing ----------------
+function distToSeg(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const l2 = dx * dx + dy * dy;
+  let t = l2 ? ((px - x1) * dx + (py - y1) * dy) / l2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const qx = x1 + t * dx, qy = y1 + t * dy;
+  return Math.hypot(px - qx, py - qy);
+}
+
+function hitShape(s, mx, my) {
+  let dx = mx - s.x, dy = my - s.y;
+  const a = -(s.rotation || 0) * Math.PI / 180;
+  const c = Math.cos(a), sn = Math.sin(a);
+  const rx = (dx * c - dy * sn) / (s.scaleX ?? 1);
+  const ry = (dx * sn + dy * c) / (s.scaleY ?? 1);
+  const pad = 4;
+  if (s.type === 'rect') return Math.abs(rx) <= s.w / 2 + pad && Math.abs(ry) <= s.h / 2 + pad;
+  if (s.type === 'ellipse') {
+    const nx = rx / (s.w / 2 + pad), ny = ry / (s.h / 2 + pad);
+    return nx * nx + ny * ny <= 1;
+  }
+  const pts = s.points || [];
+  const tol = Math.max(4, (s.strokeWidth || 2));
+  if (s.type === 'line' || (s.type === 'poly' && !s.fill)) {
+    for (let i = 0; i + 1 < pts.length; i++)
+      if (distToSeg(rx, ry, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]) <= tol) return true;
+    return false;
+  }
+  // filled poly: even-odd point-in-polygon
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    if ((pts[i][1] > ry) !== (pts[j][1] > ry) &&
+        rx < (pts[j][0] - pts[i][0]) * (ry - pts[i][1]) / (pts[j][1] - pts[i][1]) + pts[i][0]) inside = !inside;
+  }
+  return inside;
+}
+
+function topShapeAt(mx, my) {
+  for (let li = 0; li < project.layers.length; li++) {
+    const st = layerStateAt(project.layers[li], curFrame);
+    for (let i = st.length - 1; i >= 0; i--)
+      if (hitShape(st[i], mx, my)) return { layer: li, id: st[i].id };
+  }
+  return null;
+}
+
+// ---------------- mouse interaction ----------------
+function evPos(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * (canvas.width / r.width), y: (e.clientY - r.top) * (canvas.height / r.height) };
+}
+
+function curColor(key) { return document.getElementById(key).value; }
+
+function buildBrushShape(pts) {
+  const size = +document.getElementById('brushSize').value;
+  const pattern = document.getElementById('brushPattern').value;
+  const r = BrushGeom.brushToPoly(pts, size, pattern);
+  const cx = Math.round(r.cx), cy = Math.round(r.cy);
+  return { type: 'poly', x: cx, y: cy, w: Math.round(r.w), h: Math.round(r.h),
+           rotation: 0, scaleX: 1, scaleY: 1,
+           fill: curColor('fillColor'), stroke: curColor('fillColor'), strokeWidth: 1,
+           points: r.points.map(q => [Math.round(q[0] - cx), Math.round(q[1] - cy)]) };
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (playing) return;
+  const p = evPos(e);
+  if (e.button === 2) {              // right button: delete point (Points) / zoom out (Zoom)
+    if (tool === 'points') deletePointUnder(p);
+    else if (tool === 'zoom') zoomAt(e, p, 1 / ZOOM_STEP);
+    return;
+  }
+  if (e.button !== 0) return;        // ignore middle and other buttons
+  if (tool === 'zoom') {
+    zoomAt(e, p, (e.altKey || e.shiftKey) ? 1 / ZOOM_STEP : ZOOM_STEP);
+    return;
+  }
+  if (tool === 'select') {
+    const hit = topShapeAt(p.x, p.y);
+    if (hit) {
+      selection = hit;
+      activeLayer = hit.layer;
+      const s = layerStateAt(project.layers[hit.layer], curFrame).find(x => x.id === hit.id);
+      drag = { kind: 'move', startMX: p.x, startMY: p.y, sx: s.x, sy: s.y };
+      buildTimeline();
+    } else {
+      selection = null;
+    }
+    render(); buildProps();
+    return;
+  }
+  if (tool === 'points') {
+    const hit = topShapeAt(p.x, p.y);
+    if (!hit) { selection = null; render(); buildProps(); return; }
+    selection = hit;
+    activeLayer = hit.layer;
+    const s = layerStateAt(project.layers[hit.layer], curFrame).find(x => x.id === hit.id);
+    let best = null;
+    for (const h of pointHandles(s)) {
+      const sp = localToStage(s, h.local[0], h.local[1]);
+      const d = Math.hypot(sp.x - p.x, sp.y - p.y);
+      if (d <= 8 && (!best || d < best.d)) best = { h, d };
+    }
+    if (best) {
+      if (e.altKey) tryDeletePoint(s, best.h);
+      else drag = { kind: 'point', handle: best.h };
+    }
+    render(); buildProps();
+    return;
+  }
+  if (tool === 'rect' || tool === 'ellipse') {
+    drag = { kind: 'create', ax: p.x, ay: p.y, mx: p.x, my: p.y };
+  } else if (tool === 'line') {
+    drag = { kind: 'line', ax: p.x, ay: p.y, mx: p.x, my: p.y };
+  } else if (tool === 'pencil') {
+    drag = { kind: 'pencil', pts: [[p.x, p.y]] };
+  } else if (tool === 'brush') {
+    drag = { kind: 'brush', pts: [[p.x, p.y]] };
+  }
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (!drag) return;
+  const p = evPos(e);
+  if (drag.kind === 'move') {
+    applyToSelectedShape(sh => {
+      sh.x = drag.sx + (p.x - drag.startMX);
+      sh.y = drag.sy + (p.y - drag.startMY);
+    });
+  } else if (drag.kind === 'create') {
+    drag.mx = p.x; drag.my = p.y;
+    const cx = (drag.ax + drag.mx) / 2, cy = (drag.ay + drag.my) / 2;
+    drag.preview = { type: tool, x: cx, y: cy, w: Math.abs(drag.mx - drag.ax), h: Math.abs(drag.my - drag.ay),
+      rotation: 0, scaleX: 1, scaleY: 1, fill: curColor('fillColor'), stroke: curColor('strokeColor'), strokeWidth: +curColor('strokeWidth') };
+    render();
+  } else if (drag.kind === 'line') {
+    drag.mx = p.x; drag.my = p.y;
+    const cx = (drag.ax + drag.mx) / 2, cy = (drag.ay + drag.my) / 2;
+    drag.preview = { type: 'line', x: cx, y: cy, w: Math.abs(drag.mx - drag.ax), h: Math.abs(drag.my - drag.ay),
+      rotation: 0, scaleX: 1, scaleY: 1, fill: '', stroke: curColor('strokeColor'), strokeWidth: +curColor('strokeWidth'),
+      points: [[drag.ax - cx, drag.ay - cy], [drag.mx - cx, drag.my - cy]] };
+    render();
+  } else if (drag.kind === 'pencil') {
+    const last = drag.pts[drag.pts.length - 1];
+    if (Math.hypot(p.x - last[0], p.y - last[1]) >= 3) drag.pts.push([p.x, p.y]);
+    render();
+    // live stroke preview
+    if (drag.pts.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = curColor('strokeColor'); ctx.lineWidth = +curColor('strokeWidth');
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(drag.pts[0][0], drag.pts[0][1]);
+      for (const q of drag.pts) ctx.lineTo(q[0], q[1]);
+      ctx.stroke();
+      ctx.restore();
+    }
+  } else if (drag.kind === 'point') {
+    applyToSelectedShape(sh => {
+      const local = stageToLocal(sh, p.x, p.y);
+      if (drag.handle.kind === 'vertex') {
+        sh.points[drag.handle.index] = [local.x, local.y];
+        recomputePolyBox(sh);
+      } else {                     // extent handles: symmetric w/h resize
+        sh.w = Math.max(2, 2 * Math.abs(local.x));
+        sh.h = Math.max(2, 2 * Math.abs(local.y));
+      }
+    });
+  } else if (drag.kind === 'brush') {
+    const last = drag.pts[drag.pts.length - 1];
+    if (Math.hypot(p.x - last[0], p.y - last[1]) >= 2) drag.pts.push([p.x, p.y]);
+    drag.preview = buildBrushShape(drag.pts);
+    render();
+  }
+});
+
+window.addEventListener('mouseup', () => {
+  if (!drag) return;
+  if (drag.kind === 'brush') {
+    const sh = drag.preview || buildBrushShape(drag.pts);
+    if (sh.w > 0.5 || sh.h > 0.5) {
+      const kf = ensureKF(activeLayer, curFrame);
+      sh.id = nextShapeId++;
+      kf.shapes.push(sh);
+      selection = { layer: activeLayer, id: sh.id };
+      buildProps();
+    }
+  } else if (drag.kind === 'create' && drag.preview && drag.preview.w > 1 && drag.preview.h > 1) {
+    const kf = ensureKF(activeLayer, curFrame);
+    const sh = drag.preview; sh.id = nextShapeId++;
+    kf.shapes.push(sh);
+    selection = { layer: activeLayer, id: sh.id };
+    buildProps();
+  } else if (drag.kind === 'line' && drag.preview) {
+    const kf = ensureKF(activeLayer, curFrame);
+    const sh = drag.preview; sh.id = nextShapeId++;
+    kf.shapes.push(sh);
+    selection = { layer: activeLayer, id: sh.id };
+    buildProps();
+  } else if (drag.kind === 'pencil' && drag.pts.length > 1) {
+    const xs = drag.pts.map(q => q[0]), ys = drag.pts.map(q => q[1]);
+    const minx = Math.min(...xs), maxx = Math.max(...xs), miny = Math.min(...ys), maxy = Math.max(...ys);
+    const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
+    if (maxx - minx > 2 || maxy - miny > 2) {
+      const kf = ensureKF(activeLayer, curFrame);
+      const sh = { id: nextShapeId++, type: 'poly', x: cx, y: cy, w: maxx - minx, h: maxy - miny,
+        rotation: 0, scaleX: 1, scaleY: 1,
+        fill: curColor('fillColor'), stroke: curColor('strokeColor'), strokeWidth: +curColor('strokeWidth'),
+        points: drag.pts.map(q => [Math.round(q[0] - cx), Math.round(q[1] - cy)]) };
+      kf.shapes.push(sh);
+      selection = { layer: activeLayer, id: sh.id };
+      buildProps();
+    }
+  }
+  drag = null;
+  render(); buildTimeline();
+});
+
+window.addEventListener('keydown', e => {
+  if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); e.preventDefault(); }
+  else if (e.key === ' ') { togglePlay(); e.preventDefault(); }
+  else if (e.key.startsWith('Arrow') && selection) {
+    const d = e.shiftKey ? 10 : 1;
+    applyToSelectedShape(sh => {
+      if (e.key === 'ArrowLeft') sh.x -= d;
+      if (e.key === 'ArrowRight') sh.x += d;
+      if (e.key === 'ArrowUp') sh.y -= d;
+      if (e.key === 'ArrowDown') sh.y += d;
+    });
+    e.preventDefault();
+  } else if (e.key === 'v') selectTool('select');
+  else if (e.key === 'r') selectTool('rect');
+  else if (e.key === 'e') selectTool('ellipse');
+  else if (e.key === 'l') selectTool('line');
+  else if (e.key === 'p') selectTool('pencil');
+  else if (e.key === 'b') selectTool('brush');
+  else if (e.key === 'a') selectTool('points');
+  else if (e.key === 'z') selectTool('zoom');
+  else if (e.key === '+' || e.key === '=') setZoom(zoom * ZOOM_STEP);
+  else if (e.key === '-') setZoom(zoom / ZOOM_STEP);
+  else if (e.key === '0') setZoom(1);
+  else if (e.key === 'Escape') selectTool('select');
+});
+
+// double-click near an edge (Points tool): insert a vertex on that edge
+canvas.addEventListener('dblclick', e => {
+  if (tool !== 'points' || !selection) return;
+  const p = evPos(e);
+  const s = layerStateAt(project.layers[selection.layer], curFrame).find(x => x.id === selection.id);
+  if (!s || !s.points) return;
+  const wrap = s.type === 'poly' && s.fill;
+  const n = s.points.length;
+  let best = null;
+  for (let i = 0; i < (wrap ? n : n - 1); i++) {
+    const a = localToStage(s, s.points[i][0], s.points[i][1]);
+    const b = localToStage(s, s.points[(i + 1) % n][0], s.points[(i + 1) % n][1]);
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const l2 = dx * dx + dy * dy;
+    let t = l2 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const d = Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    if (d <= 9 && (!best || d < best.d)) best = { i, t, d };
+  }
+  if (best) {
+    applyToSelectedShape(sh => {
+      const ia = sh.points[best.i], ib = sh.points[(best.i + 1) % sh.points.length];
+      sh.points.splice(best.i + 1, 0,
+        [ia[0] + (ib[0] - ia[0]) * best.t, ia[1] + (ib[1] - ia[1]) * best.t]);
+      recomputePolyBox(sh);
+    });
+    render();
+  }
+});
+
+// right-click on the canvas in Points mode: point deletion, no browser menu
+canvas.addEventListener('contextmenu', e => {
+  if (tool === 'points') e.preventDefault();
+});
+
+// Ctrl+wheel: zoom at the cursor (plain wheel still scrolls/pans)
+canvas.addEventListener('wheel', e => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  zoomAt(e, evPos(e), e.deltaY < 0 ? 1.125 : 1 / 1.125);
+}, { passive: false });
+
+// ---------------- toolbar wiring ----------------
+function selectTool(t) {
+  tool = t;
+  document.querySelectorAll('#tools button').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+  canvas.style.cursor = t === 'select' ? 'default' : (t === 'zoom' ? 'zoom-in' : 'crosshair');
+}
+document.querySelectorAll('#tools button').forEach(b => b.onclick = () => selectTool(b.dataset.tool));
+document.getElementById('brushSize').oninput = e => {
+  document.getElementById('brushSizeLabel').textContent = e.target.value;
+};
+document.getElementById('btnSimplify').onclick = () => {
+  if (!selection) { setStatus('Select a shape first (the Points tool shows its points).'); return; }
+  const s = layerStateAt(project.layers[selection.layer], curFrame).find(x => x.id === selection.id);
+  if (!s || !s.points) { setStatus('Only line / poly / brush shapes have points to simplify.'); return; }
+  const tol = +document.getElementById('simplifyTol').value || 2;
+  const closed = s.type === 'poly' && !!s.fill;
+  const before = s.points.length;
+  const out = Simplify.simplifyPoints(s.points, tol, closed, 1);
+  if (out.length >= before) { setStatus('Nothing to remove at tolerance ' + tol + ' px.'); return; }
+  applyToSelectedShape(sh => { sh.points = out; recomputePolyBox(sh); });
+  buildTimeline();
+  setStatus('Simplified ' + s.type + ': ' + before + ' -> ' + out.length + ' points (tolerance ' + tol + ' px).');
+};
+document.getElementById('zoomIn').onclick = () => setZoom(zoom * ZOOM_STEP);
+document.getElementById('zoomOut').onclick = () => setZoom(zoom / ZOOM_STEP);
+document.getElementById('zoomReset').onclick = () => setZoom(1);
+
+function togglePlay() {
+  playing = !playing;
+  document.getElementById('btnPlay').textContent = playing ? 'Stop' : 'Play';
+  document.getElementById('btnPlay').classList.toggle('active', playing);
+  if (playing) {
+    playTimer = setInterval(() => { setFrame(curFrame % project.frameCount + 1); }, 1000 / project.fps);
+  } else {
+    clearInterval(playTimer);
+  }
+}
+document.getElementById('btnPlay').onclick = togglePlay;
+
+document.getElementById('btnAddKF').onclick = () => {
+  const kf = ensureKF(activeLayer, curFrame);
+  if (!kf.shapes.length) setStatus('Empty keyframe added at frame ' + curFrame + ' (layer "' + project.layers[activeLayer].name + '").');
+  buildTimeline(); render();
+};
+document.getElementById('btnDelKF').onclick = () => {
+  const layer = project.layers[activeLayer];
+  if (layer.keyframes.length <= 1) { setStatus('Cannot remove the last keyframe of a layer.'); return; }
+  layer.keyframes = layer.keyframes.filter(k => k.frame !== curFrame);
+  buildTimeline(); render();
+};
+document.getElementById('btnAddLayer').onclick = () => {
+  project.layers.push({ name: 'Layer ' + (project.layers.length + 1), keyframes: [{ frame: 1, shapes: [] }] });
+  activeLayer = project.layers.length - 1;
+  buildTimeline();
+};
+document.getElementById('btnDelLayer').onclick = () => {
+  if (project.layers.length <= 1) return;
+  project.layers.splice(activeLayer, 1);
+  activeLayer = Math.max(0, activeLayer - 1);
+  selection = null;
+  buildTimeline(); render(); buildProps();
+};
+
+document.getElementById('fps').onchange = e => project.fps = Math.max(1, +e.target.value || 24);
+document.getElementById('charName').oninput = e => project.name = e.target.value || 'Character1';
+document.getElementById('frameCount').onchange = e => {
+  project.frameCount = Math.max(1, +e.target.value || 12);
+  if (curFrame > project.frameCount) curFrame = project.frameCount;
+  buildTimeline(); render();
+};
+document.getElementById('stageW').onchange = e => { project.stage.w = Math.max(32, +e.target.value || 550); resizeCanvas(); };
+document.getElementById('stageH').onchange = e => { project.stage.h = Math.max(32, +e.target.value || 400); resizeCanvas(); };
+
+// ---------------- save / load / export ----------------
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+
+document.getElementById('btnSave').onclick = () => {
+  const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (project.name || 'character') + '.swfproj.json';
+  a.click();
+  setStatus('Project saved as ' + a.download);
+};
+document.getElementById('btnLoad').onclick = () => document.getElementById('fileInput').click();
+document.getElementById('fileInput').onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      project = JSON.parse(rd.result);
+      nextShapeId = 1 + project.layers.reduce((m, L) => Math.max(m, ...L.keyframes.flatMap(k => k.shapes.map(s => s.id || 0)).concat([0])), 0);
+      curFrame = 1; activeLayer = 0; selection = null; playing = false;
+      document.getElementById('charName').value = project.name;
+      document.getElementById('fps').value = project.fps;
+      document.getElementById('frameCount').value = project.frameCount;
+      document.getElementById('stageW').value = project.stage.w;
+      document.getElementById('stageH').value = project.stage.h;
+      resizeCanvas(); buildTimeline(); buildProps();
+      setStatus('Project loaded: ' + f.name);
+    } catch (err) { setStatus('Load failed: ' + err); }
+  };
+  rd.readAsText(f);
+};
+
+function bake() {
+  const frames = [];
+  const layerBase = project.layers.map((_, li) => (project.layers.length - 1 - li) * 1000);
+  for (let f = 1; f <= project.frameCount; f++) {
+    const flat = [];
+    project.layers.forEach((L, li) => {
+      layerStateAt(L, f).forEach((s, idx) => flat.push(Object.assign({}, s, { depth: layerBase[li] + idx })));
+    });
+    frames.push(flat);
+  }
+  return { name: project.name, fps: project.fps, stage: project.stage, frames };
+}
+
+document.getElementById('btnExport').onclick = () => {
+  try {
+    const baked = bake();
+    if (!baked.frames.some(f => f.length)) {
+      setStatus('Nothing to export - draw something first.');
+      return;
+    }
+    const swf = SWFExporter.exportProject(baked);
+    const blob = new Blob([swf], { type: 'application/octet-stream' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (project.name || 'character') + '.swf';
+    a.click();
+    setStatus('Exported ' + a.download + ' (' + swf.length + ' bytes) - generated 100% in your browser.');
+  } catch (err) {
+    setStatus('Export failed: ' + err.message);
+  }
+};
+
+// ---------------- boot ----------------
+resizeCanvas();
+buildTimeline();
+buildProps();
+selectTool('select');
+</script>
+</body>
+</html>
